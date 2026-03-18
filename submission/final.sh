@@ -69,7 +69,7 @@ echo "You've collected $COLLECTED BTC in treasures!"
 echo ""
 echo "CHALLENGE 5: Validate the ancient vault address"
 echo "--------------------------------------------"
-P2SH_VALID=$(bitcoin-cli -regtest validateaddress "$P2SH_ADDR" | grep -o '"isvalid":[^,}]*' | cut -d':' -f2 | tr -d ' ')
+P2SH_VALID=$(bitcoin-cli -regtest validateaddress "$P2SH_ADDR" | jq -r '.isvalid')
 check_cmd "Address validation"
 echo "P2SH vault validation: $P2SH_VALID"
 
@@ -114,7 +114,19 @@ NEW_TAPROOT_ADDR=$(trim "$NEW_TAPROOT_ADDR")
 ADDR_INFO=$(bitcoin-cli -regtest -rpcwallet=btrustwallet getaddressinfo "$NEW_TAPROOT_ADDR")
 check_cmd "Getting address info"
 
-INTERNAL_KEY=$(echo "$ADDR_INFO" | grep -o '"internalkey":"[^"]*"' | cut -d'"' -f4)
+# Extract the descriptor from address info, then pull the key out of it
+# In v28, the desc field looks like: tr([fingerprint/path]xpub...)#checksum
+# We need the raw pubkey - get it from the pubkey field or parse the descriptor
+INTERNAL_KEY=$(echo "$ADDR_INFO" | jq -r '.pubkey // empty')
+
+# If pubkey not available, extract from the descriptor
+if [[ -z "$INTERNAL_KEY" ]]; then
+  RAW_DESC=$(echo "$ADDR_INFO" | jq -r '.desc // empty')
+  # descriptor looks like tr([d6043800/86h/1h/0h/0/0]xpubKEY)#checksum
+  # extract just the key inside tr()
+  INTERNAL_KEY=$(echo "$RAW_DESC" | grep -oP 'tr\(\K[^)#]+' | sed "s/\[.*\]//")
+fi
+
 check_cmd "Extracting key from descriptor"
 INTERNAL_KEY=$(trim "$INTERNAL_KEY")
 
@@ -122,14 +134,14 @@ echo "Using internal key: $INTERNAL_KEY"
 SIMPLE_DESCRIPTOR="tr($INTERNAL_KEY)"
 echo "Simple descriptor: $SIMPLE_DESCRIPTOR"
 
-TAPROOT_DESCRIPTOR=$(bitcoin-cli -regtest getdescriptorinfo "$SIMPLE_DESCRIPTOR" | grep -o '"descriptor":"[^"]*"' | cut -d'"' -f4)
+TAPROOT_DESCRIPTOR=$(bitcoin-cli -regtest getdescriptorinfo "$SIMPLE_DESCRIPTOR" | jq -r '.descriptor')
 check_cmd "Descriptor generation"
 TAPROOT_DESCRIPTOR=$(trim "$TAPROOT_DESCRIPTOR")
 echo "Taproot treasure map: $TAPROOT_DESCRIPTOR"
 
 DERIVED_ADDR_RAW=$(bitcoin-cli -regtest deriveaddresses "$TAPROOT_DESCRIPTOR")
 check_cmd "Address derivation"
-DERIVED_ADDR=$(echo "$DERIVED_ADDR_RAW" | tr -d '[]" \n\t')
+DERIVED_ADDR=$(echo "$DERIVED_ADDR_RAW" | jq -r '.[0]')
 echo "Derived quantum vault address: $DERIVED_ADDR"
 
 echo "New taproot address: $NEW_TAPROOT_ADDR"
